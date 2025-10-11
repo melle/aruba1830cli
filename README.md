@@ -34,7 +34,7 @@ Open the project in Xcode for full debugging support:
 open Package.swift
 ```
 
-See **`DEBUG_CRASH.md`** for detailed debugging instructions and troubleshooting tips.
+Then edit the scheme to add command-line arguments and environment variables.
 
 ### Running
 
@@ -50,23 +50,13 @@ Or after building:
 
 ## Documentation
 
-### For Users
 - **`ARUBA_1830_API_REFERENCE.md`** - Complete API documentation
   - 118 endpoints cataloged
   - Authentication flow
   - Request/response formats
   - All operations documented
-
-### For Developers
-- **`SWIFT_IMPLEMENTATION_GUIDE.md`** - Swift implementation guide
-  - HTTP client patterns
-  - XML parsing strategies
-  - Session management
-- **`DEBUG_CRASH.md`** - Debugging guide
-  - Xcode setup instructions
-  - Troubleshooting crashes
-  - Debugging techniques
-  - Code examples
+  - Port enable/disable procedures
+  - MAC table operations
 
 ## Package Structure
 
@@ -96,19 +86,20 @@ This package uses Swift 6 language mode with:
 
 ### Configuration
 
-Set up credentials in `.env` file (see [ENV_EXAMPLE.md](ENV_EXAMPLE.md)):
+Set up credentials in `.env` file in the project root:
 
 ```bash
 ARUBA_HOST=192.168.7.68
 ARUBA_USERNAME=admin
 ARUBA_PASSWORD=yourpassword
-ARUBA_SESSION_TOKEN=cs2d4faf80
 ```
 
-Or provide via command line:
+The CLI will automatically authenticate and acquire session credentials.
+
+Alternatively, provide credentials via command line:
 
 ```bash
-aruba1830 mac-table --host 192.168.7.68 --user admin --password secret --session-token cs2d4faf80
+aruba1830 mac-table --host 192.168.7.68 --user admin --password secret
 ```
 
 ### MAC Address Table
@@ -133,20 +124,26 @@ aruba1830 mac-table --vlan 10 --port 5
 # List all ports
 aruba1830 port list
 
-# Enable a port
+# Enable a port by number
 aruba1830 port enable 1
+
+# Enable a port by MAC address (auto-detected)
+aruba1830 port enable aa:bb:cc:dd:ee:ff
+
+# Enable all ports at once
+aruba1830 port enable all
 
 # Disable a port by number
 aruba1830 port disable 1
 
-# Disable port by MAC address (special feature!)
-aruba1830 port disable 11:22:33:44:55:66
+# Disable a port by MAC address (auto-detected, with safety check!)
+aruba1830 port disable aa:bb:cc:dd:ee:ff
 
 # Force disable even if multiple MACs on port
-aruba1830 port disable 11:22:33:44:55:66 --force
+aruba1830 port disable aa:bb:cc:dd:ee:ff --force
 
-# Alternative command for MAC-based disable
-aruba1830 port disable-by-mac 11:22:33:44:55:66
+# Disable all ports at once
+aruba1830 port disable all
 ```
 
 ### System Information
@@ -179,35 +176,31 @@ aruba1830 poe status
 aruba1830 poe disable 5
 ```
 
-## Special Feature: Port Disable by MAC Address
+## Special Feature: Smart Port Control
 
-The CLI includes a safety feature when disabling ports by MAC address:
+The CLI automatically detects whether you're specifying a port number or MAC address - no flags needed!
 
 ```bash
-# Find MAC in table and disable associated port
-aruba1830 port disable aa:bb:cc:dd:ee:ff
+# By port number (auto-detected)
+aruba1830 port enable 1
+
+# By MAC address (auto-detected)
+aruba1830 port enable aa:bb:cc:dd:ee:ff
+
+# Enable or disable all ports
+aruba1830 port enable all
+aruba1830 port disable all
 ```
 
-**Safety Check:** If multiple MAC addresses are detected on the target port, the CLI will warn you and require the `--force` flag:
+**Safety Check for MAC-based Disable:** When disabling a port by MAC address, if multiple MAC addresses are detected on the target port, the CLI will warn you and require the `--force` flag:
 
 ```
 ⚠️  Warning: 5 MAC addresses found on port 8
 Use --force to disable anyway
 ```
 
-This prevents accidentally disconnecting multiple devices.
-
-## Testing
-
-⚠️ **IMPORTANT:** Tests that modify switch configuration only affect **PORT 1** to prevent network disruption.
+This prevents accidentally disconnecting multiple devices. Simply add `--force` if you're sure:
 
 ```bash
-# Run all tests
-swift test
-
-# Run specific test suite
-swift test --filter ModelsTests
-swift test --filter XMLParserTests
-swift test --filter ConfigurationTests
+aruba1830 port disable aa:bb:cc:dd:ee:ff --force
 ```
-
