@@ -121,7 +121,6 @@ struct PortCommand: AsyncParsableCommand {
             PortListCommand.self,
             PortEnableCommand.self,
             PortDisableCommand.self,
-            PortDisableByMACCommand.self,
         ]
     )
 }
@@ -161,13 +160,13 @@ struct PortListCommand: AsyncParsableCommand {
 struct PortEnableCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "enable",
-        abstract: "Enable a port"
+        abstract: "Enable a port by port number or MAC address, or enable all ports"
     )
     
     @OptionGroup var globalOptions: GlobalOptions
     
-    @Argument(help: "Port number")
-    var port: String
+    @Argument(help: "Port number, MAC address, or 'all'")
+    var portOrMAC: String?
     
     mutating func run() async throws {
         let config = try globalOptions.getConfiguration()
@@ -180,21 +179,52 @@ struct PortEnableCommand: AsyncParsableCommand {
             sessionCookie: config.sessionCookie
         )
         
-        try await client.setPortState(session: session, port: port, enabled: true)
-        print("Port \(port) enabled successfully")
+        guard let identifier = portOrMAC else {
+            throw ArubaError.missingArgument("Port number, MAC address, or 'all' required. Use 'aruba1830 port enable <PORT/MAC/all>'")
+        }
+        
+        if identifier.lowercased() == "all" {
+            // Enable all ports
+            let ports = try await client.getPorts(session: session)
+            var enabledCount = 0
+            for port in ports {
+                if !port.isEnabled {
+                    try await client.setPortState(session: session, port: port.portNumber, enabled: true)
+                    enabledCount += 1
+                }
+            }
+            print("Enabled \(enabledCount) port(s)")
+        } else {
+            // Auto-detect if it's a MAC address
+            let macPattern = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
+            if identifier.range(of: macPattern, options: .regularExpression) != nil {
+                // It's a MAC address - find the port
+                let entries = try await client.getMACTable(session: session)
+                guard let entry = entries.first(where: { $0.macAddress.lowercased() == identifier.lowercased() }) else {
+                    throw ArubaError.invalidMACAddress("MAC address \(identifier) not found in MAC table")
+                }
+                
+                try await client.setPortState(session: session, port: entry.portNumber, enabled: true)
+                print("Port \(entry.portNumber) (MAC: \(identifier)) enabled successfully")
+            } else {
+                // It's a port number
+                try await client.setPortState(session: session, port: identifier, enabled: true)
+                print("Port \(identifier) enabled successfully")
+            }
+        }
     }
 }
 
 struct PortDisableCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "disable",
-        abstract: "Disable a port"
+        abstract: "Disable a port by port number or MAC address, or disable all ports"
     )
     
     @OptionGroup var globalOptions: GlobalOptions
     
-    @Argument(help: "Port number or MAC address")
-    var portOrMAC: String
+    @Argument(help: "Port number, MAC address, or 'all'")
+    var portOrMAC: String?
     
     @Flag(name: .long, help: "Force disable even if multiple MACs on port")
     var force: Bool = false
@@ -210,58 +240,39 @@ struct PortDisableCommand: AsyncParsableCommand {
             sessionCookie: config.sessionCookie
         )
         
-        // Check if it's a MAC address or port number
-        let macPattern = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
-        if portOrMAC.range(of: macPattern, options: .regularExpression) != nil {
-            // It's a MAC address
-            do {
-                try await client.disablePortByMAC(session: session, macAddress: portOrMAC, force: force)
-                print("Port associated with MAC \(portOrMAC) disabled successfully")
-            } catch ArubaError.multipleMACsOnPort(let port, let count) {
-                print("⚠️  Warning: \(count) MAC addresses found on port \(port)")
-                print("Use --force to disable anyway")
-                throw ExitCode.failure
-            }
-        } else {
-            // It's a port number
-            try await client.setPortState(session: session, port: portOrMAC, enabled: false)
-            print("Port \(portOrMAC) disabled successfully")
+        guard let identifier = portOrMAC else {
+            throw ArubaError.missingArgument("Port number, MAC address, or 'all' required. Use 'aruba1830 port disable <PORT/MAC/all>'")
         }
-    }
-}
-
-struct PortDisableByMACCommand: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "disable-by-mac",
-        abstract: "Disable port by MAC address"
-    )
-    
-    @OptionGroup var globalOptions: GlobalOptions
-    
-    @Argument(help: "MAC address (format: 11:22:33:44:55:66)")
-    var macAddress: String
-    
-    @Flag(name: .long, help: "Force disable even if multiple MACs on port")
-    var force: Bool = false
-    
-    mutating func run() async throws {
-        let config = try globalOptions.getConfiguration()
-        let client = ArubaClient()
-        let session = try await client.login(
-            host: config.host,
-            username: config.username,
-            password: config.password,
-            sessionToken: config.sessionToken,
-            sessionCookie: config.sessionCookie
-        )
         
-        do {
-            try await client.disablePortByMAC(session: session, macAddress: macAddress, force: force)
-            print("Port associated with MAC \(macAddress) disabled successfully")
-        } catch ArubaError.multipleMACsOnPort(let port, let count) {
-            print("⚠️  Warning: \(count) MAC addresses found on port \(port)")
-            print("Use --force to disable anyway")
-            throw ExitCode.failure
+        if identifier.lowercased() == "all" {
+            // Disable all ports
+            let ports = try await client.getPorts(session: session)
+            var disabledCount = 0
+            for port in ports {
+                if port.isEnabled {
+                    try await client.setPortState(session: session, port: port.portNumber, enabled: false)
+                    disabledCount += 1
+                }
+            }
+            print("Disabled \(disabledCount) port(s)")
+        } else {
+            // Auto-detect if it's a MAC address
+            let macPattern = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
+            if identifier.range(of: macPattern, options: .regularExpression) != nil {
+                // It's a MAC address - use the disablePortByMAC method
+                do {
+                    try await client.disablePortByMAC(session: session, macAddress: identifier, force: force)
+                    print("Port associated with MAC \(identifier) disabled successfully")
+                } catch ArubaError.multipleMACsOnPort(let port, let count) {
+                    print("⚠️  Warning: \(count) MAC addresses found on port \(port)")
+                    print("Use --force to disable anyway")
+                    throw ExitCode.failure
+                }
+            } else {
+                // It's a port number
+                try await client.setPortState(session: session, port: identifier, enabled: false)
+                print("Port \(identifier) disabled successfully")
+            }
         }
     }
 }

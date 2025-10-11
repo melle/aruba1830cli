@@ -37,8 +37,7 @@ public final class ArubaHTTPClient: Sendable {
         }
         
         do {
-            // For now, just use the main session - it will follow redirects by default
-            // TODO: Implement proper redirect control if needed
+            // Use the main session which follows redirects by default
             let (data, response) = try await session.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {

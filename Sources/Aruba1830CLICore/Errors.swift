@@ -14,6 +14,7 @@ public enum ArubaError: Error, Sendable, Equatable {
     case invalidMACAddress(String)
     case invalidCredentials
     case missingCredentials
+    case missingArgument(String)
 }
 
 extension ArubaError: LocalizedError {
@@ -45,6 +46,8 @@ extension ArubaError: LocalizedError {
             return "Invalid credentials provided"
         case .missingCredentials:
             return "Missing credentials. Provide via --host, --user, --password or .env file"
+        case .missingArgument(let message):
+            return message
         }
     }
 }

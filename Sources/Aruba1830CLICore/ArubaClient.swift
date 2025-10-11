@@ -156,7 +156,7 @@ public actor ArubaClient {
             }
         }
         
-        // Alternative: search for the pattern /XXXXXXXXXX/hpe/ where X is alphanumeric
+        // Fallback: search for the pattern /XXXXXXXXXX/hpe/ where X is alphanumeric
         let pattern = "/([a-z0-9]{8,12})/hpe/"
         if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
            let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
