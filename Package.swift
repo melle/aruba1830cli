@@ -54,5 +54,13 @@ let package = Package(
                 .enableUpcomingFeature("ExistentialAny"),
             ]
         ),
+        .testTarget(
+            name: "Aruba1830CLITests",
+            dependencies: ["Aruba1830CLI"],
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableUpcomingFeature("ExistentialAny"),
+            ]
+        ),
     ]
 )
