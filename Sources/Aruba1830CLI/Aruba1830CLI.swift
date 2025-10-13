@@ -350,7 +350,7 @@ struct PortDisableCommand: AsyncParsableCommand {
                 } catch {
                     emitWarning("Failed to update port MAC log for port \(result.port): \(error)")
                 }
-                print("Port associated with MAC \(identifier) disabled successfully")
+                print("Port \(result.port) (MAC: \(identifier)) disabled successfully")
             } catch ArubaError.multipleMACsOnPort(let port, let count) {
                 print("⚠️  Warning: \(count) MAC addresses found on port \(port)")
                 print("Use --force to disable anyway")
