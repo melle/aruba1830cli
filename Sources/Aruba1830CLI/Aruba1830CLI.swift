@@ -39,6 +39,9 @@ struct GlobalOptions: ParsableArguments {
     @Option(name: .long, help: "Path to .env file")
     var envFile: String = ".env"
     
+    @Option(name: .long, help: "Path to port MAC log file")
+    var portMacFile: String?
+    
     func getConfiguration() throws -> ArubaConfiguration {
         // Try to load from .env file first
         var config = ArubaConfiguration.loadFromEnv(path: envFile)
@@ -62,7 +65,40 @@ struct GlobalOptions: ParsableArguments {
         
         return finalConfig
     }
+    
+    func resolvePortMacFilePath(host: String) -> URL {
+        if let override = portMacFile, !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        
+        let sanitizedHost = sanitizeForFilename(host)
+        return URL(fileURLWithPath: ".aruba1830_\(sanitizedHost).ports")
+    }
+    
+    private func sanitizeForFilename(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        var result = ""
+        for scalar in value.unicodeScalars {
+            if allowed.contains(scalar) {
+                result.append(String(scalar))
+            } else {
+                result.append("_")
+            }
+        }
+        return result
+    }
 }
+
+private func emitWarning(_ message: String) {
+    let output = "⚠️  \(message)\n"
+    if let data = output.data(using: .utf8) {
+        FileHandle.standardError.write(data)
+    } else {
+        fputs(output, stderr)
+    }
+}
+
+private let macAddressPattern = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
 
 // MARK: - MAC Table Command
 
@@ -183,35 +219,68 @@ struct PortEnableCommand: AsyncParsableCommand {
             throw ArubaError.missingArgument("Port number, MAC address, or 'all' required. Use 'aruba1830 port enable <PORT/MAC/all>'")
         }
         
+        let logPath = globalOptions.resolvePortMacFilePath(host: config.host)
+        let portLog = PortActivityLog(fileURL: logPath)
+        do {
+            try await portLog.load()
+        } catch {
+            emitWarning("Failed to load port MAC log at \(logPath.path): \(error)")
+        }
+        
         if identifier.lowercased() == "all" {
-            // Enable all ports
             let ports = try await client.getPorts(session: session)
             var enabledCount = 0
             for port in ports {
+                let portNumber = port.portNumber
                 if !port.isEnabled {
-                    try await client.setPortState(session: session, port: port.portNumber, enabled: true)
+                    try await client.setPortState(session: session, port: portNumber, enabled: true)
                     enabledCount += 1
+                }
+                do {
+                    try await portLog.remove(port: portNumber)
+                } catch {
+                    emitWarning("Failed to update port MAC log for port \(portNumber): \(error)")
                 }
             }
             print("Enabled \(enabledCount) port(s)")
-        } else {
-            // Auto-detect if it's a MAC address
-            let macPattern = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
-            if identifier.range(of: macPattern, options: .regularExpression) != nil {
-                // It's a MAC address - find the port
-                let entries = try await client.getMACTable(session: session)
-                guard let entry = entries.first(where: { $0.macAddress.lowercased() == identifier.lowercased() }) else {
-                    throw ArubaError.invalidMACAddress("MAC address \(identifier) not found in MAC table")
-                }
-                
-                try await client.setPortState(session: session, port: entry.portNumber, enabled: true)
-                print("Port \(entry.portNumber) (MAC: \(identifier)) enabled successfully")
-            } else {
-                // It's a port number
-                try await client.setPortState(session: session, port: identifier, enabled: true)
-                print("Port \(identifier) enabled successfully")
-            }
+            return
         }
+        
+        if identifier.range(of: macAddressPattern, options: .regularExpression) != nil {
+            let macEntries = try await client.findMACAddress(session: session, macAddress: identifier)
+            if let match = macEntries.first {
+                let portNumber = match.portNumber
+                try await client.setPortState(session: session, port: portNumber, enabled: true)
+                do {
+                    try await portLog.remove(port: portNumber)
+                } catch {
+                    emitWarning("Failed to update port MAC log for port \(portNumber): \(error)")
+                }
+                print("Port \(portNumber) (MAC: \(identifier)) enabled successfully")
+                return
+            }
+            
+            if let fallbackPort = try await portLog.port(forMAC: identifier) {
+                try await client.setPortState(session: session, port: fallbackPort, enabled: true)
+                do {
+                    try await portLog.remove(port: fallbackPort)
+                } catch {
+                    emitWarning("Failed to update port MAC log for port \(fallbackPort): \(error)")
+                }
+                print("Port \(fallbackPort) (MAC: \(identifier)) enabled using cached mapping")
+                return
+            }
+            
+            throw ArubaError.invalidMACAddress("MAC address \(identifier) not found in MAC table or port log")
+        }
+        
+        try await client.setPortState(session: session, port: identifier, enabled: true)
+        do {
+            try await portLog.remove(port: identifier)
+        } catch {
+            emitWarning("Failed to update port MAC log for port \(identifier): \(error)")
+        }
+        print("Port \(identifier) enabled successfully")
     }
 }
 
@@ -244,36 +313,60 @@ struct PortDisableCommand: AsyncParsableCommand {
             throw ArubaError.missingArgument("Port number, MAC address, or 'all' required. Use 'aruba1830 port disable <PORT/MAC/all>'")
         }
         
+        let logPath = globalOptions.resolvePortMacFilePath(host: config.host)
+        let portLog = PortActivityLog(fileURL: logPath)
+        do {
+            try await portLog.load()
+        } catch {
+            emitWarning("Failed to load port MAC log at \(logPath.path): \(error)")
+        }
+        
         if identifier.lowercased() == "all" {
-            // Disable all ports
             let ports = try await client.getPorts(session: session)
+            let macTable = try await client.getMACTable(session: session)
+            let macsByPort = Dictionary(grouping: macTable, by: { $0.portNumber }).mapValues { $0.map(\.macAddress) }
             var disabledCount = 0
             for port in ports {
-                if port.isEnabled {
-                    try await client.setPortState(session: session, port: port.portNumber, enabled: false)
-                    disabledCount += 1
+                guard port.isEnabled else { continue }
+                let portNumber = port.portNumber
+                let macs = macsByPort[portNumber] ?? []
+                try await client.setPortState(session: session, port: portNumber, enabled: false)
+                do {
+                    try await portLog.record(port: portNumber, macs: macs)
+                } catch {
+                    emitWarning("Failed to update port MAC log for port \(portNumber): \(error)")
                 }
+                disabledCount += 1
             }
             print("Disabled \(disabledCount) port(s)")
-        } else {
-            // Auto-detect if it's a MAC address
-            let macPattern = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
-            if identifier.range(of: macPattern, options: .regularExpression) != nil {
-                // It's a MAC address - use the disablePortByMAC method
-                do {
-                    try await client.disablePortByMAC(session: session, macAddress: identifier, force: force)
-                    print("Port associated with MAC \(identifier) disabled successfully")
-                } catch ArubaError.multipleMACsOnPort(let port, let count) {
-                    print("⚠️  Warning: \(count) MAC addresses found on port \(port)")
-                    print("Use --force to disable anyway")
-                    throw ExitCode.failure
-                }
-            } else {
-                // It's a port number
-                try await client.setPortState(session: session, port: identifier, enabled: false)
-                print("Port \(identifier) disabled successfully")
-            }
+            return
         }
+        
+        if identifier.range(of: macAddressPattern, options: .regularExpression) != nil {
+            do {
+                let result = try await client.disablePortByMAC(session: session, macAddress: identifier, force: force)
+                do {
+                    try await portLog.record(port: result.port, macs: result.macs.map(\.macAddress))
+                } catch {
+                    emitWarning("Failed to update port MAC log for port \(result.port): \(error)")
+                }
+                print("Port associated with MAC \(identifier) disabled successfully")
+            } catch ArubaError.multipleMACsOnPort(let port, let count) {
+                print("⚠️  Warning: \(count) MAC addresses found on port \(port)")
+                print("Use --force to disable anyway")
+                throw ExitCode.failure
+            }
+            return
+        }
+        
+        let macEntries = try await client.getMACTableFiltered(session: session, port: identifier)
+        try await client.setPortState(session: session, port: identifier, enabled: false)
+        do {
+            try await portLog.record(port: identifier, macs: macEntries.map(\.macAddress))
+        } catch {
+            emitWarning("Failed to update port MAC log for port \(identifier): \(error)")
+        }
+        print("Port \(identifier) disabled successfully")
     }
 }
 

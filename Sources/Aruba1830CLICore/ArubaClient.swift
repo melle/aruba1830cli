@@ -261,7 +261,7 @@ public actor ArubaClient {
     
     // MARK: - Special: Disable Port by MAC Address
     
-    public func disablePortByMAC(session: ArubaSession, macAddress: String, force: Bool = false) async throws {
+    public func disablePortByMAC(session: ArubaSession, macAddress: String, force: Bool = false) async throws -> (port: String, macs: [MACTableEntry]) {
         // Validate MAC address format
         let macPattern = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
         guard macAddress.range(of: macPattern, options: .regularExpression) != nil else {
@@ -286,6 +286,7 @@ public actor ArubaClient {
         
         // Disable the port
         try await setPortState(session: session, port: port, enabled: false)
+        return (port, macsOnPort)
     }
     
     // MARK: - System Operations
@@ -341,4 +342,3 @@ public actor ArubaClient {
         }
     }
 }
-
