@@ -156,6 +156,7 @@ struct PortCommand: AsyncParsableCommand {
         subcommands: [
             PortListCommand.self,
             PortEnableCommand.self,
+            PortBanCommand.self,
             PortDisableCommand.self,
         ]
     )
@@ -281,6 +282,114 @@ struct PortEnableCommand: AsyncParsableCommand {
             emitWarning("Failed to update port MAC log for port \(identifier): \(error)")
         }
         print("Port \(identifier) enabled successfully")
+    }
+}
+
+enum PortBanAction: Equatable {
+    case alreadyBanned(port: String)
+    case banOn(port: String, previousPort: String?)
+}
+
+struct PortBanPlanner {
+    static func action(savedPort: String?, macEntries: [MACTableEntry]) -> PortBanAction? {
+        if let entry = macEntries.first {
+            let currentPort = entry.portNumber
+            if let saved = savedPort, saved != currentPort {
+                return .banOn(port: currentPort, previousPort: saved)
+            }
+            return .banOn(port: currentPort, previousPort: nil)
+        }
+        
+        if let saved = savedPort {
+            return .alreadyBanned(port: saved)
+        }
+        
+        return nil
+    }
+}
+
+struct PortBanCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "ban",
+        abstract: "Ban a MAC address by disabling its port and tracking moves"
+    )
+    
+    @OptionGroup var globalOptions: GlobalOptions
+    
+    @Argument(help: "MAC address to ban")
+    var macAddress: String
+    
+    @Flag(name: .long, help: "Force disable even if multiple MACs on port")
+    var force: Bool = false
+    
+    mutating func run() async throws {
+        guard macAddress.range(of: macAddressPattern, options: .regularExpression) != nil else {
+            throw ArubaError.invalidMACAddress(macAddress)
+        }
+        
+        let config = try globalOptions.getConfiguration()
+        let client = ArubaClient()
+        let session = try await client.login(
+            host: config.host,
+            username: config.username,
+            password: config.password,
+            sessionToken: config.sessionToken,
+            sessionCookie: config.sessionCookie
+        )
+        
+        let logPath = globalOptions.resolvePortMacFilePath(host: config.host)
+        let portLog = PortActivityLog(fileURL: logPath)
+        do {
+            try await portLog.load()
+        } catch {
+            emitWarning("Failed to load port MAC log at \(logPath.path): \(error)")
+        }
+        
+        let savedPort: String?
+        do {
+            savedPort = try await portLog.port(forMAC: macAddress)
+        } catch {
+            emitWarning("Failed to read cached port for MAC \(macAddress): \(error)")
+            savedPort = nil
+        }
+        
+        let macEntries = try await client.findMACAddress(session: session, macAddress: macAddress)
+        
+        guard let action = PortBanPlanner.action(savedPort: savedPort, macEntries: macEntries) else {
+            throw ArubaError.parsingError("MAC address \(macAddress) not found in MAC table")
+        }
+        
+        switch action {
+        case .alreadyBanned(let port):
+            print("MAC \(macAddress) is already banned on port \(port) (cached)")
+        case .banOn(let targetPort, let previousPort):
+            if let previousPort = previousPort {
+                try await client.setPortState(session: session, port: previousPort, enabled: true)
+                do {
+                    try await portLog.remove(mac: macAddress, from: previousPort)
+                } catch {
+                    emitWarning("Failed to update port MAC log for port \(previousPort): \(error)")
+                }
+                print("Port \(previousPort) re-enabled because MAC moved to port \(targetPort)")
+            }
+            
+            do {
+                let result = try await client.disablePortByMAC(session: session, macAddress: macAddress, force: force)
+                if result.port != targetPort {
+                    emitWarning("MAC \(macAddress) found on unexpected port \(result.port); expected \(targetPort)")
+                }
+                do {
+                    try await portLog.record(port: result.port, macs: result.macs.map(\.macAddress))
+                } catch {
+                    emitWarning("Failed to update port MAC log for port \(result.port): \(error)")
+                }
+                print("Port \(result.port) (MAC: \(macAddress)) banned successfully")
+            } catch ArubaError.multipleMACsOnPort(let port, let count) {
+                print("⚠️  Warning: \(count) MAC addresses found on port \(port)")
+                print("Use --force to disable anyway")
+                throw ExitCode.failure
+            }
+        }
     }
 }
 

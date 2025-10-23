@@ -61,6 +61,21 @@ actor PortActivityLog {
         entries.removeValue(forKey: port)
         try persist()
     }
+
+    func remove(mac: String, from port: String) throws {
+        try ensureLoaded()
+        guard var macs = entries[port] else {
+            return
+        }
+        let normalized = Self.normalize(mac: mac)
+        macs.remove(normalized)
+        if macs.isEmpty {
+            entries.removeValue(forKey: port)
+        } else {
+            entries[port] = macs
+        }
+        try persist()
+    }
     
     func port(forMAC mac: String) throws -> String? {
         try ensureLoaded()
