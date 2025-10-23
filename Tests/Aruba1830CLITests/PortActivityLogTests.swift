@@ -37,6 +37,32 @@ final class PortActivityLogTests: XCTestCase {
         XCTAssertEqual(lookup, "5")
     }
     
+    func testRemoveMacUpdatesEntry() async throws {
+        let (log, _, directoryURL) = try makeLog()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        
+        try await log.load()
+        try await log.record(port: "7", macs: ["00:11:22:33:44:55", "aa:bb:cc:dd:ee:ff"])
+        
+        try await log.remove(mac: "00-11-22-33-44-55", from: "7")
+        
+        let snapshot = try await log.snapshot()
+        XCTAssertEqual(snapshot["7"], ["aa:bb:cc:dd:ee:ff"])
+    }
+    
+    func testRemoveMacDeletesPortWhenLastEntryRemoved() async throws {
+        let (log, _, directoryURL) = try makeLog()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        
+        try await log.load()
+        try await log.record(port: "8", macs: ["00:11:22:33:44:55"])
+        
+        try await log.remove(mac: "00:11:22:33:44:55", from: "8")
+        
+        let snapshot = try await log.snapshot()
+        XCTAssertNil(snapshot["8"])
+    }
+    
     private func makeLog() throws -> (PortActivityLog, URL, URL) {
         let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
