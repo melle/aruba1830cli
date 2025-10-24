@@ -156,7 +156,7 @@ struct PortCommand: AsyncParsableCommand {
         subcommands: [
             PortListCommand.self,
             PortEnableCommand.self,
-            PortBanCommand.self,
+            MacBanCommand.self,
             PortDisableCommand.self,
         ]
     )
@@ -285,13 +285,13 @@ struct PortEnableCommand: AsyncParsableCommand {
     }
 }
 
-enum PortBanAction: Equatable {
+enum MacBanAction: Equatable {
     case alreadyBanned(port: String)
     case banOn(port: String, previousPort: String?)
 }
 
-struct PortBanPlanner {
-    static func action(savedPort: String?, macEntries: [MACTableEntry]) -> PortBanAction? {
+struct MacBanPlanner {
+    static func action(savedPort: String?, macEntries: [MACTableEntry]) -> MacBanAction? {
         if let entry = macEntries.first {
             let currentPort = entry.portNumber
             if let saved = savedPort, saved != currentPort {
@@ -308,7 +308,7 @@ struct PortBanPlanner {
     }
 }
 
-struct PortBanCommand: AsyncParsableCommand {
+struct MacBanCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ban",
         abstract: "Ban a MAC address by disabling its port and tracking moves"
@@ -355,7 +355,7 @@ struct PortBanCommand: AsyncParsableCommand {
         
         let macEntries = try await client.findMACAddress(session: session, macAddress: macAddress)
         
-        guard let action = PortBanPlanner.action(savedPort: savedPort, macEntries: macEntries) else {
+        guard let action = MacBanPlanner.action(savedPort: savedPort, macEntries: macEntries) else {
             throw ArubaError.parsingError("MAC address \(macAddress) not found in MAC table")
         }
         
