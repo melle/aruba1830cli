@@ -4,13 +4,14 @@ A cross-platform Swift CLI tool for managing Aruba 1830 network switches via HTT
 
 ## Features
 
-- 🔧 **Port Management** - Enable/disable ports, view status and statistics
-- 📊 **MAC Address Table** - View and filter MAC addresses by VLAN or port
-- 🌐 **VLAN Management** - View and manage VLANs
-- ⚡ **PoE Control** - Manage Power over Ethernet settings
-- 📝 **System Monitoring** - View logs, system info, and diagnostics
-- 🔐 **User Management** - Manage admin users and sessions
-- 🏗️ **Cross-platform** - Builds on macOS and Linux
+- **Port Management** - Enable/disable ports, view status and statistics
+- **MAC Address Table** - View and filter MAC addresses by VLAN or port
+- **Friendly Aliases** - Use human-readable names for MAC addresses
+- **VLAN Management** - View and manage VLANs
+- **PoE Control** - Manage Power over Ethernet settings
+- **System Monitoring** - View logs, system info, and diagnostics
+- **User Management** - Manage admin users and sessions
+- **Cross-platform** - Builds on macOS and Linux
 
 ## Quick Start
 
@@ -127,8 +128,9 @@ aruba1830 port list
 # Enable a port by number
 aruba1830 port enable 1
 
-# Enable a port by MAC address (auto-detected)
+# Enable a port by MAC address or alias (auto-detected)
 aruba1830 port enable aa:bb:cc:dd:ee:ff
+aruba1830 port enable AppleTV
 
 # Enable all ports at once
 aruba1830 port enable all
@@ -136,8 +138,9 @@ aruba1830 port enable all
 # Disable a port by number
 aruba1830 port disable 1
 
-# Disable a port by MAC address (auto-detected, with safety check!)
+# Disable a port by MAC address or alias (auto-detected, with safety check!)
 aruba1830 port disable aa:bb:cc:dd:ee:ff
+aruba1830 port disable AppleTV
 
 # Force disable even if multiple MACs on port
 aruba1830 port disable aa:bb:cc:dd:ee:ff --force
@@ -178,7 +181,7 @@ aruba1830 poe disable 5
 
 ## Special Feature: Smart Port Control
 
-The CLI automatically detects whether you're specifying a port number or MAC address - no flags needed!
+The CLI automatically detects whether you're specifying a port number, MAC address, or alias - no flags needed!
 
 ```bash
 # By port number (auto-detected)
@@ -186,6 +189,9 @@ aruba1830 port enable 1
 
 # By MAC address (auto-detected)
 aruba1830 port enable aa:bb:cc:dd:ee:ff
+
+# By alias (auto-detected)
+aruba1830 port enable AppleTV
 
 # Enable or disable all ports
 aruba1830 port enable all
@@ -197,6 +203,20 @@ aruba1830 port disable all
 ```
 ⚠️  Warning: 5 MAC addresses found on port 8
 Use --force to disable anyway
+
+## MAC Aliases
+
+Store friendly names for frequently used MAC addresses in `.aruba1830-macaliases.txt` (defaults to the current working directory) or provide a custom path with `--mac-alias-file`.
+
+Example file:
+
+```
+6c:4a:85:4f:7d:f4    AppleTV
+5C-ED-F4-B0-88-CE    AndroidPhoneKid1
+# Lines starting with # are ignored
+```
+
+Whitespace separates the normalized MAC address from the alias. Aliases are case-insensitive and can be used anywhere a MAC address is accepted (e.g. `aruba1830 port disable AppleTV`).
 ```
 
 This prevents accidentally disconnecting multiple devices. Simply add `--force` if you're sure:
