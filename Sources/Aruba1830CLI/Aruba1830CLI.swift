@@ -119,11 +119,7 @@ struct GlobalOptions: ParsableArguments {
 
 private func emitWarning(_ message: String) {
     let output = "⚠️  \(message)\n"
-    if let data = output.data(using: .utf8) {
-        FileHandle.standardError.write(data)
-    } else {
-        fputs(output, stderr)
-    }
+    print(output)
 }
 
 private let macAddressPattern = "^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"

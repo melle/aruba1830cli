@@ -1,4 +1,5 @@
 import Foundation
+import FoundationXML
 
 public final class ArubaXMLParser: NSObject, XMLParserDelegate, @unchecked Sendable {
     private var currentElement = ""

@@ -1,4 +1,6 @@
 import Foundation
+import FoundationNetworking
+
 
 public final class ArubaHTTPClient: Sendable {
     private let session: URLSession
