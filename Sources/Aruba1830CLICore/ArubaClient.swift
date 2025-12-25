@@ -15,7 +15,36 @@ public actor ArubaClient {
     // MARK: - Authentication
     
     /// Performs full login flow: obtains session token via redirect, then logs in with credentials
+    /// Retries up to 3 times with exponential backoff for transient failures
     public func login(host: String, username: String, password: String, sessionToken: String? = nil, sessionCookie: String? = nil) async throws -> ArubaSession {
+        var lastError: Error?
+        let maxRetries = 3
+        
+        for attempt in 0..<maxRetries {
+            do {
+                return try await performLogin(host: host, username: username, password: password, sessionToken: sessionToken, sessionCookie: sessionCookie)
+            } catch {
+                lastError = error
+                
+                // Only retry on authentication failures (might be transient)
+                // Don't retry on last attempt or if it's not an auth error
+                guard attempt < maxRetries - 1,
+                      case ArubaError.authenticationFailed = error else {
+                    throw error
+                }
+                
+                // Exponential backoff: 0.5s, 1s, 2s
+                let delaySeconds: Double = 0.5 * Double(1 << attempt)  // 0.5, 1.0, 2.0 seconds
+                try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            }
+        }
+        
+        // If we get here, all retries failed
+        throw lastError ?? ArubaError.authenticationFailed("Login failed after \(maxRetries) attempts")
+    }
+    
+    /// Internal login implementation without retry logic
+    private func performLogin(host: String, username: String, password: String, sessionToken: String? = nil, sessionCookie: String? = nil) async throws -> ArubaSession {
         // If both session token and cookie are provided, use them directly
         if let token = sessionToken, let cookie = sessionCookie {
             return ArubaSession(
@@ -69,10 +98,16 @@ public actor ArubaClient {
             throw ArubaError.invalidURL(loginURLString)
         }
         
-        let (_, loginResponse) = try await URLSession.shared.data(from: loginURL)
+        let (loginData, loginResponse) = try await URLSession.shared.data(from: loginURL)
         
         guard let httpLoginResponse = loginResponse as? HTTPURLResponse else {
             throw ArubaError.invalidResponse
+        }
+        
+        // Check status code first - login might have failed
+        if httpLoginResponse.statusCode != 200 {
+            let responseBody = String(data: loginData, encoding: .utf8) ?? "<unable to decode>"
+            throw ArubaError.authenticationFailed("Login request returned status \(httpLoginResponse.statusCode). Response: \(responseBody.prefix(200))")
         }
         
         // Extract sessionID cookie from Set-Cookie header
@@ -84,7 +119,9 @@ public actor ArubaClient {
         } else if let extracted = extractSessionCookie(from: setCookieHeader) {
             cookie = extracted
         } else {
-            throw ArubaError.authenticationFailed("Failed to obtain session cookie from login response. Set-Cookie: \(setCookieHeader ?? "nil")")
+            // Read response body for debugging
+            let responseBody = String(data: loginData, encoding: .utf8) ?? "<unable to decode>"
+            throw ArubaError.authenticationFailed("Failed to obtain session cookie from login response (status: \(httpLoginResponse.statusCode)). Set-Cookie: \(setCookieHeader ?? "nil"). Response body: \(responseBody.prefix(200))")
         }
         
         return ArubaSession(
