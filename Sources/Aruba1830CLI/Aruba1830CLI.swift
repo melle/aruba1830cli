@@ -322,10 +322,11 @@ struct PortEnableCommand: AsyncParsableCommand {
 enum MacBanAction: Equatable {
     case alreadyBanned(port: String)
     case banOn(port: String, previousPort: String?)
+    case recordPendingBan
 }
 
 struct MacBanPlanner {
-    static func action(savedPort: String?, macEntries: [MACTableEntry]) -> MacBanAction? {
+    static func action(savedPort: String?, macEntries: [MACTableEntry]) -> MacBanAction {
         if let entry = macEntries.first {
             let currentPort = entry.portNumber
             if let saved = savedPort, saved != currentPort {
@@ -338,7 +339,7 @@ struct MacBanPlanner {
             return .alreadyBanned(port: saved)
         }
         
-        return nil
+        return .recordPendingBan
     }
 }
 
@@ -399,9 +400,7 @@ struct MacBanCommand: AsyncParsableCommand {
         
         let macEntries = try await client.findMACAddress(session: session, macAddress: normalizedInput)
         
-        guard let action = MacBanPlanner.action(savedPort: savedPort, macEntries: macEntries) else {
-            throw ArubaError.parsingError("MAC address \(macDescription) not found in MAC table")
-        }
+        let action = MacBanPlanner.action(savedPort: savedPort, macEntries: macEntries)
         
         switch action {
         case .alreadyBanned(let port):
@@ -424,6 +423,7 @@ struct MacBanCommand: AsyncParsableCommand {
                 }
                 do {
                     try await portLog.record(port: result.port, macs: result.macs.map(\.macAddress))
+                    try await portLog.removePendingBan(mac: normalizedInput)
                 } catch {
                     emitWarning("Failed to update port MAC log for port \(result.port): \(error)")
                 }
@@ -432,6 +432,14 @@ struct MacBanCommand: AsyncParsableCommand {
                 print("⚠️  Warning: \(count) MAC addresses found on port \(port)")
                 print("Use --force to disable anyway")
                 throw ExitCode.failure
+            }
+        case .recordPendingBan:
+            do {
+                try await portLog.recordPendingBan(mac: normalizedInput)
+                print("MAC \(macDescription) not found in MAC table; recorded pending ban")
+            } catch {
+                emitWarning("Failed to record pending ban for MAC \(macDescription): \(error)")
+                throw error
             }
         }
     }

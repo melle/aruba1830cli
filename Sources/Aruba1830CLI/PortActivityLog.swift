@@ -6,6 +6,8 @@ enum PortActivityLogError: Error {
 }
 
 actor PortActivityLog {
+    private static let pendingBansKey = "__pendingBans"
+    
     private let fileURL: URL
     private let fileManager: FileManager
     private var entries: [String: Set<String>] = [:]
@@ -77,11 +79,43 @@ actor PortActivityLog {
         try persist()
     }
     
+    func recordPendingBan(mac: String) throws {
+        try ensureLoaded()
+        let normalized = Self.normalize(mac: mac)
+        var pending = entries[Self.pendingBansKey] ?? []
+        pending.insert(normalized)
+        entries[Self.pendingBansKey] = pending
+        try persist()
+    }
+    
+    func removePendingBan(mac: String) throws {
+        try ensureLoaded()
+        guard var pending = entries[Self.pendingBansKey] else {
+            return
+        }
+        
+        let normalized = Self.normalize(mac: mac)
+        pending.remove(normalized)
+        if pending.isEmpty {
+            entries.removeValue(forKey: Self.pendingBansKey)
+        } else {
+            entries[Self.pendingBansKey] = pending
+        }
+        try persist()
+    }
+    
+    func hasPendingBan(mac: String) throws -> Bool {
+        try ensureLoaded()
+        let normalized = Self.normalize(mac: mac)
+        return entries[Self.pendingBansKey]?.contains(normalized) ?? false
+    }
+    
     func port(forMAC mac: String) throws -> String? {
         try ensureLoaded()
         let normalized = Self.normalize(mac: mac)
-        return entries.first { _, value in
-            value.contains(normalized)
+        return entries.first { port, value in
+            guard port != Self.pendingBansKey else { return false }
+            return value.contains(normalized)
         }?.key
     }
     

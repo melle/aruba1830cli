@@ -63,6 +63,33 @@ final class PortActivityLogTests: XCTestCase {
         XCTAssertNil(snapshot["8"])
     }
     
+    func testPendingBanCreatesFileWithoutPortMapping() async throws {
+        let (log, fileURL, directoryURL) = try makeLog()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        
+        try await log.load()
+        try await log.recordPendingBan(mac: "AA-BB-CC-11-22-33")
+        
+        let hasPendingBan = try await log.hasPendingBan(mac: "aa:bb:cc:11:22:33")
+        let portLookup = try await log.port(forMAC: "aa:bb:cc:11:22:33")
+        
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertTrue(hasPendingBan)
+        XCTAssertNil(portLookup)
+    }
+    
+    func testRemovePendingBanDeletesFileWhenNoEntriesRemain() async throws {
+        let (log, fileURL, directoryURL) = try makeLog()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        
+        try await log.load()
+        try await log.recordPendingBan(mac: "00:11:22:33:44:55")
+        
+        try await log.removePendingBan(mac: "00-11-22-33-44-55")
+        
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+    
     private func makeLog() throws -> (PortActivityLog, URL, URL) {
         let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)

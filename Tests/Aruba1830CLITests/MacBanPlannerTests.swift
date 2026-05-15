@@ -17,9 +17,9 @@ final class MacBanPlannerTests: XCTestCase {
         XCTAssertEqual(action, .alreadyBanned(port: "5"))
     }
     
-    func testActionReturnsNilWhenNoDataAvailable() {
+    func testActionRecordsPendingBanWhenNoDataAvailable() {
         let action = MacBanPlanner.action(savedPort: nil, macEntries: [])
-        XCTAssertNil(action)
+        XCTAssertEqual(action, .recordPendingBan)
     }
     
     func testActionDetectsPortChange() {
